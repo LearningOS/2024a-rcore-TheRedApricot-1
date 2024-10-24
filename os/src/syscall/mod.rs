@@ -26,14 +26,37 @@ mod process;
 
 use fs::*;
 use process::*;
+
+use crate::config::{MAX_APP_NUM, MAX_SYSCALL_NUM};
+use crate::task::TASK_MANAGER;
+
+static mut SYSCALL_TIMES: [[u32; MAX_SYSCALL_NUM]; MAX_APP_NUM] =
+    [[0; MAX_SYSCALL_NUM]; MAX_APP_NUM];
+
 /// handle syscall exception with `syscall_id` and other arguments
 pub fn syscall(syscall_id: usize, args: [usize; 3]) -> isize {
-    match syscall_id {
-        SYSCALL_WRITE => sys_write(args[0], args[1] as *const u8, args[2]),
-        SYSCALL_EXIT => sys_exit(args[0] as i32),
-        SYSCALL_YIELD => sys_yield(),
-        SYSCALL_GET_TIME => sys_get_time(args[0] as *mut TimeVal, args[1]),
-        SYSCALL_TASK_INFO => sys_task_info(args[0] as *mut TaskInfo),
-        _ => panic!("Unsupported syscall_id: {}", syscall_id),
+    let id = TASK_MANAGER.get_current_task_id();
+
+    unsafe {
+        match syscall_id {
+            SYSCALL_WRITE => {
+                SYSCALL_TIMES[id][SYSCALL_WRITE] += 1;
+                sys_write(args[0], args[1] as *const u8, args[2])
+            }
+            SYSCALL_EXIT => sys_exit(args[0] as i32),
+            SYSCALL_YIELD => {
+                SYSCALL_TIMES[id][SYSCALL_YIELD] += 1;
+                sys_yield()
+            }
+            SYSCALL_GET_TIME => {
+                SYSCALL_TIMES[id][SYSCALL_GET_TIME] += 1;
+                sys_get_time(args[0] as *mut TimeVal, args[1])
+            }
+            SYSCALL_TASK_INFO => {
+                SYSCALL_TIMES[id][SYSCALL_TASK_INFO] += 1;
+                sys_task_info(args[0] as *mut TaskInfo, SYSCALL_TIMES[id])
+            }
+            _ => panic!("Unsupported syscall_id: {}", syscall_id),
+        }
     }
 }

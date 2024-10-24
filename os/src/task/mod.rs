@@ -44,7 +44,7 @@ pub struct TaskManagerInner {
     /// task list
     tasks: [TaskControlBlock; MAX_APP_NUM],
     /// id of current `Running` task
-    current_task: usize,
+    pub current_task: usize,
 }
 
 lazy_static! {
@@ -134,6 +134,11 @@ impl TaskManager {
         } else {
             panic!("All applications completed!");
         }
+    }
+
+    /// Get ID of the current task.
+    pub(crate) fn get_current_task_id(&self) -> usize {
+        self.inner.borrow().current_task
     }
 }
 
