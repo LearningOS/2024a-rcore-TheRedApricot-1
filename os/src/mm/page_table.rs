@@ -8,13 +8,21 @@ use bitflags::*;
 bitflags! {
     /// page table entry flags
     pub struct PTEFlags: u8 {
+        /// valid
         const V = 1 << 0;
+        /// read
         const R = 1 << 1;
+        /// write
         const W = 1 << 2;
+        /// execute
         const X = 1 << 3;
+        /// user
         const U = 1 << 4;
+        /// global
         const G = 1 << 5;
+        /// access
         const A = 1 << 6;
+        /// dirty
         const D = 1 << 7;
     }
 }
@@ -124,6 +132,15 @@ impl PageTable {
             ppn = pte.ppn();
         }
         result
+    }
+    pub fn is_page_mapped(&self, vpn: VirtPageNum) -> bool {
+        match self.find_pte(vpn) {
+            Some(pte) => pte.is_valid(),
+            None => false,
+        }
+    }
+    pub fn is_page_unmapped(&self, vpn: VirtPageNum) -> bool {
+        !self.find_pte(vpn).unwrap().is_valid()
     }
     /// set the map between virtual page number and physical page number
     #[allow(unused)]

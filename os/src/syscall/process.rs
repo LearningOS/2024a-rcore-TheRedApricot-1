@@ -1,10 +1,17 @@
 //! Process management syscalls
 use crate::{
     config::MAX_SYSCALL_NUM,
+    mm::{translated_byte_buffer, MapPermission, VirtAddr},
     task::{
-        change_program_brk, exit_current_and_run_next, suspend_current_and_run_next, TaskStatus,
+        change_program_brk, current_user_token, exit_current_and_run_next,
+        suspend_current_and_run_next, TaskStatus, TASK_MANAGER,
     },
+    timer::{get_time_ms, get_time_us},
 };
+
+use alloc::vec;
+use alloc::vec::Vec;
+use core::mem::size_of;
 
 #[repr(C)]
 #[derive(Debug)]
@@ -38,32 +45,86 @@ pub fn sys_yield() -> isize {
     0
 }
 
-/// YOUR JOB: get time with second and microsecond
-/// HINT: You might reimplement it with virtual memory management.
-/// HINT: What if [`TimeVal`] is splitted by two pages ?
-pub fn sys_get_time(_ts: *mut TimeVal, _tz: usize) -> isize {
+pub fn sys_get_time(ts: *mut TimeVal, _tz: usize) -> isize {
     trace!("kernel: sys_get_time");
-    -1
+
+    let mut raw_data =
+        translated_byte_buffer(current_user_token(), ts as *const u8, size_of::<TimeVal>());
+
+    let us = get_time_us();
+    let sec = us / 1_000_000;
+    let usec = us % 1_000_000;
+
+    let mut data_slice = [0; size_of::<TimeVal>()];
+    data_slice[0..8].copy_from_slice(&sec.to_ne_bytes());
+    data_slice[8..].copy_from_slice(&usec.to_ne_bytes());
+
+    let data = &mut raw_data[0];
+    data.copy_from_slice(&data_slice);
+
+    0
 }
 
-/// YOUR JOB: Finish sys_task_info to pass testcases
-/// HINT: You might reimplement it with virtual memory management.
-/// HINT: What if [`TaskInfo`] is splitted by two pages ?
-pub fn sys_task_info(_ti: *mut TaskInfo) -> isize {
-    trace!("kernel: sys_task_info NOT IMPLEMENTED YET!");
-    -1
+pub fn sys_task_info(ti: *mut TaskInfo, times: &[u32]) -> isize {
+    trace!("kernel: sys_task_info");
+
+    let mut raw_data =
+        translated_byte_buffer(current_user_token(), ti as *const u8, size_of::<TaskInfo>());
+
+    let status = TaskStatus::Running;
+
+    let mut syscall_times = vec![[0; 4]; MAX_SYSCALL_NUM];
+    for i in 0..MAX_SYSCALL_NUM {
+        syscall_times[i] = times[i].to_ne_bytes();
+    }
+    let syscall_times = syscall_times.into_iter().flatten().collect::<Vec<u8>>();
+    let time = get_time_ms();
+
+    let mut data_slice = [0; size_of::<TaskInfo>()];
+    data_slice[0..500 * 4].copy_from_slice(&syscall_times);
+    data_slice[500 * 4..500 * 4 + 8].copy_from_slice(&time.to_ne_bytes());
+    data_slice[500 * 4 + 8..].copy_from_slice(&(status as usize).to_ne_bytes());
+
+    let data = &mut raw_data[0];
+    data.copy_from_slice(&data_slice);
+
+    0
 }
 
-// YOUR JOB: Implement mmap.
-pub fn sys_mmap(_start: usize, _len: usize, _port: usize) -> isize {
-    trace!("kernel: sys_mmap NOT IMPLEMENTED YET!");
-    -1
+pub fn sys_mmap(start: usize, len: usize, port: usize) -> isize {
+    trace!("kernel: sys_mmap");
+
+    let start_va = VirtAddr::from(start);
+    let end_va = VirtAddr::from(start + len);
+
+    if !start_va.aligned() {
+        return -1;
+    }
+    if port & !0x7 != 0 {
+        return -1;
+    }
+    if port & 0x7 == 0 {
+        return -1;
+    }
+
+    TASK_MANAGER.map(
+        start_va,
+        end_va,
+        MapPermission::from_bits(((port as u8) | 0x8) << 1).unwrap(),
+    )
 }
 
-// YOUR JOB: Implement munmap.
-pub fn sys_munmap(_start: usize, _len: usize) -> isize {
-    trace!("kernel: sys_munmap NOT IMPLEMENTED YET!");
-    -1
+pub fn sys_munmap(start: usize, len: usize) -> isize {
+    trace!("kernel: sys_munmap");
+
+    let start_va = VirtAddr::from(start);
+    let end_va = VirtAddr::from(start + len);
+
+    if !start_va.aligned() {
+        return -1;
+    }
+
+    TASK_MANAGER.unmap(start_va, end_va)
 }
 /// change data segment size
 pub fn sys_sbrk(size: i32) -> isize {

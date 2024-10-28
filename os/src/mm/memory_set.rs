@@ -57,18 +57,37 @@ impl MemorySet {
         start_va: VirtAddr,
         end_va: VirtAddr,
         permission: MapPermission,
-    ) {
+    ) -> isize {
         self.push(
             MapArea::new(start_va, end_va, MapType::Framed, permission),
             None,
-        );
+        )
     }
-    fn push(&mut self, mut map_area: MapArea, data: Option<&[u8]>) {
-        map_area.map(&mut self.page_table);
+    /// Insert a area which has been unmapped before
+    pub fn insert_unmapped_framed_area(&mut self, start_va: VirtAddr, end_va: VirtAddr) -> isize {
+        self.unmap_and_push(MapArea::new(
+            start_va,
+            end_va,
+            MapType::Framed,
+            MapPermission::all(),
+        ))
+    }
+    fn push(&mut self, mut map_area: MapArea, data: Option<&[u8]>) -> isize {
+        if map_area.map(&mut self.page_table) != 0 {
+            return -1;
+        }
         if let Some(data) = data {
             map_area.copy_data(&mut self.page_table, data);
         }
         self.areas.push(map_area);
+        0
+    }
+    fn unmap_and_push(&mut self, mut map_area: MapArea) -> isize {
+        if map_area.unmap(&mut self.page_table) != 0 {
+            return -1;
+        }
+        self.areas.push(map_area);
+        0
     }
     /// Mention that trampoline is not collected by areas.
     fn map_trampoline(&mut self) {
@@ -272,6 +291,7 @@ pub struct MapArea {
 }
 
 impl MapArea {
+    /// Create
     pub fn new(
         start_va: VirtAddr,
         end_va: VirtAddr,
@@ -287,6 +307,7 @@ impl MapArea {
             map_perm,
         }
     }
+    /// Map one
     pub fn map_one(&mut self, page_table: &mut PageTable, vpn: VirtPageNum) {
         let ppn: PhysPageNum;
         match self.map_type {
@@ -303,24 +324,36 @@ impl MapArea {
         page_table.map(vpn, ppn, pte_flags);
     }
     #[allow(unused)]
+    /// Unmap one
     pub fn unmap_one(&mut self, page_table: &mut PageTable, vpn: VirtPageNum) {
         if self.map_type == MapType::Framed {
             self.data_frames.remove(&vpn);
         }
         page_table.unmap(vpn);
     }
-    pub fn map(&mut self, page_table: &mut PageTable) {
+    /// Map
+    pub fn map(&mut self, page_table: &mut PageTable) -> isize {
         for vpn in self.vpn_range {
+            if page_table.is_page_mapped(vpn) {
+                return -1;
+            }
             self.map_one(page_table, vpn);
         }
+        0
     }
     #[allow(unused)]
-    pub fn unmap(&mut self, page_table: &mut PageTable) {
+    /// Unmap
+    pub fn unmap(&mut self, page_table: &mut PageTable) -> isize {
         for vpn in self.vpn_range {
+            if page_table.is_page_unmapped(vpn) {
+                return -1;
+            }
             self.unmap_one(page_table, vpn);
         }
+        0
     }
     #[allow(unused)]
+    /// Shrink
     pub fn shrink_to(&mut self, page_table: &mut PageTable, new_end: VirtPageNum) {
         for vpn in VPNRange::new(new_end, self.vpn_range.get_end()) {
             self.unmap_one(page_table, vpn)
@@ -328,6 +361,7 @@ impl MapArea {
         self.vpn_range = VPNRange::new(self.vpn_range.get_start(), new_end);
     }
     #[allow(unused)]
+    /// Append
     pub fn append_to(&mut self, page_table: &mut PageTable, new_end: VirtPageNum) {
         for vpn in VPNRange::new(self.vpn_range.get_end(), new_end) {
             self.map_one(page_table, vpn)
@@ -361,7 +395,9 @@ impl MapArea {
 #[derive(Copy, Clone, PartialEq, Debug)]
 /// map type for memory set: identical or framed
 pub enum MapType {
+    /// Map to the physical address identical to virtual address
     Identical,
+    /// Map to a frame which is allocated and cleared
     Framed,
 }
 
