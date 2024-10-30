@@ -125,6 +125,15 @@ impl PageTable {
         }
         result
     }
+    pub fn is_page_mapped(&self, vpn: VirtPageNum) -> bool {
+        match self.find_pte(vpn) {
+            Some(pte) => pte.is_valid(),
+            None => false,
+        }
+    }
+    pub fn is_page_unmapped(&self, vpn: VirtPageNum) -> bool {
+        !self.find_pte(vpn).unwrap().is_valid()
+    }
     /// set the map between virtual page number and physical page number
     #[allow(unused)]
     pub fn map(&mut self, vpn: VirtPageNum, ppn: PhysPageNum, flags: PTEFlags) {

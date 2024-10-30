@@ -7,6 +7,8 @@
 use super::__switch;
 use super::{fetch_task, TaskStatus};
 use super::{TaskContext, TaskControlBlock};
+use crate::config::BIG_STRIDE;
+use crate::mm::{MapPermission, VirtAddr};
 use crate::sync::UPSafeCell;
 use crate::trap::TrapContext;
 use alloc::sync::Arc;
@@ -44,9 +46,35 @@ impl Processor {
     pub fn current(&self) -> Option<Arc<TaskControlBlock>> {
         self.current.as_ref().map(Arc::clone)
     }
+    /// Map
+    pub fn map(&self, start_va: VirtAddr, end_va: VirtAddr, permission: MapPermission) -> isize {
+        self.current
+            .as_ref()
+            .unwrap()
+            .inner_exclusive_access()
+            .memory_set
+            .insert_framed_area(start_va, end_va, permission)
+    }
+    /// Unmap
+    pub fn unmap(&self, start_va: VirtAddr, end_va: VirtAddr) -> isize {
+        self.current
+            .as_ref()
+            .unwrap()
+            .inner_exclusive_access()
+            .memory_set
+            .insert_unmapped_framed_area(start_va, end_va)
+    }
+    /// Set priority
+    pub fn set_prio(&self, prio: usize) {
+        let mut inner = self.current.as_ref().unwrap().inner_exclusive_access();
+        inner.prio = prio;
+        // We must update pass info after setting new priority
+        inner.pass = BIG_STRIDE / inner.prio;
+    }
 }
 
 lazy_static! {
+    /// Processor instance
     pub static ref PROCESSOR: UPSafeCell<Processor> = unsafe { UPSafeCell::new(Processor::new()) };
 }
 
@@ -59,6 +87,8 @@ pub fn run_tasks() {
             let idle_task_cx_ptr = processor.get_idle_task_cx_ptr();
             // access coming task TCB exclusively
             let mut task_inner = task.inner_exclusive_access();
+            //  update its stride
+            task_inner.stride += task_inner.pass;
             let next_task_cx_ptr = &task_inner.task_cx as *const TaskContext;
             task_inner.task_status = TaskStatus::Running;
             // release coming task_inner manually
